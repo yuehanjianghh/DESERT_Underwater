@@ -83,12 +83,16 @@ UWTWR_AAUV::UWTWR_AAUV()
 	, ack_enabled(1)
 	, n_dropped_ack_pkts(0)
 	, is_running(false)
+	, n_pollers(1) // Default to a single poller (legacy protocol)
+	, poller_index(0)
 {
 	bind("T_ack_timer_", (double *) &T_ack_timer);
 	bind("ack_enabled_", (int *) &ack_enabled);
 	bind("POLL_size_", (int *) &POLL_size);
 	bind("ACK_size_", (int *) &ACK_size);
 	bind("poll_size_", (int *) &poll_size);
+	bind("n_pollers_", (int *) &n_pollers);
+	bind("poller_index_", (int *) &poller_index);
 }
 
 UWTWR_AAUV::~UWTWR_AAUV()
@@ -110,8 +114,21 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 				initInfo();
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "run") == 0) {
+			if (n_pollers < 1 || poller_index < 0 || poller_index >= n_pollers) {
+				std::cerr << "UWTWR_AAUV(" << addr << ")::run: invalid schedule, "
+						  << "poller_index_ = " << poller_index
+						  << " must be in [0, n_pollers_ - 1], n_pollers_ = "
+						  << n_pollers << std::endl;
+				return TCL_ERROR;
+			}
 			is_running = true;
-			stateIdle();
+			if (poller_index > 0) {
+				// wait for this poller's slot before the first POLL
+				TxEnabled = false;
+				ack_timer.schedule(poller_index * T_ack_timer);
+			} else {
+				stateIdle();
+			}
 			return TCL_OK;
 		} else if (strcasecmp(argv[1], "stop") == 0) {
 			is_running = false;
@@ -343,7 +360,8 @@ void UWTWR_AAUV::stateWaitAck()
 	// if (debug_)
 	// 	std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
 	// 			  << ")::scheduling_ACK_TIMER_T= " << T_ack_timer << std::endl;
-	ack_timer.schedule(T_ack_timer);
+	// one POLL every n_pollers slots, the other slots belong to the other pollers
+	ack_timer.schedule(n_pollers * T_ack_timer);
 }
 
 void UWTWR_AAUV::stateRxAck()

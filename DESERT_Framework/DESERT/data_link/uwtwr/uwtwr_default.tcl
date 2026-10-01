@@ -35,6 +35,8 @@ PacketHeaderManager set tab_(PacketHeader/ACK_NODE) 1
 Module/UW/TWR/AAUV set T_ack_timer_        1
 Module/UW/TWR/AAUV set ack_enabled_        1
 Module/UW/TWR/AAUV set POLL_size_        8
+Module/UW/TWR/AAUV set n_pollers_        1
+Module/UW/TWR/AAUV set poller_index_     0
 
 Module/UW/TWR/NODE set T_backoff_        0.01
 Module/UW/TWR/NODE set ACK_size_        10
