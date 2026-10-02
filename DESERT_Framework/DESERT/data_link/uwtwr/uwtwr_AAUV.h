@@ -564,6 +564,40 @@ protected:
 	// Buoy alternation: several pollers share one slotted schedule
 	int n_pollers; /**< Number of pollers sharing the schedule, one slot (T_ack_timer) each (1 = legacy) */
 	int poller_index; /**< Slot of this poller in the schedule (0 = first poller, B1) */
+
+	// Ranges measured by this poller (valid ACKs only), relayed to the other buoy in the hybrid protocol
+	/**
+	 * Range from this poller to a polled node
+	 */
+	struct RangeMeas {
+		double range; /**< Range [m] = TOF * sound_speed */
+		double time; /**< Measurement time [s]: transmission start of the ACK */
+	};
+	std::map<int, RangeMeas> last_range; /**< Last range measured to each node (node_id_) */
+	double sound_speed; /**< Sound speed used to convert a TOF into a range [m/s] */
+
+	/**
+	 * Store the range measured from a valid ACK
+	 * @param node node_id_ of the node that sent the ACK
+	 * @param range Range [m]
+	 * @param t_meas Measurement time [s]
+	 */
+	virtual void storeRange(int node, double range, double t_meas);
+
+	// Hybrid protocol: B1/B2 pair with an ideal WiFi relay (role from poller_index: 0 = B1, 1 = B2)
+	int hybrid; /**< 1: hybrid protocol enabled, 0: off (default) */
+	Position *position; /**< Position of this buoy (setPosition), NULL if not set */
+	UWTWR_AAUV *partner; /**< Other buoy of the pair, models the WiFi link (setPartner) */
+	int latest_node; /**< node_id_ of the latest range measured by this buoy, -1 if none */
+
+	/**
+	 * Range to relay: the partner's latest own range, if measured within the last
+	 * n_pollers slots (i.e. the partner's last exchange, never one of the previous round)
+	 * @param node [out] node_id_ of that range, -1 if none
+	 * @param m [out] the range and its measurement time
+	 * @return true if a fresh range is available
+	 */
+	virtual bool getRelayedRange(int &node, RangeMeas &m) const;
 };
 
 #endif

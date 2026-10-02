@@ -85,6 +85,11 @@ UWTWR_AAUV::UWTWR_AAUV()
 	, is_running(false)
 	, n_pollers(1) // Default to a single poller (legacy protocol)
 	, poller_index(0)
+	, sound_speed(1500.0)
+	, hybrid(0) // Hybrid protocol off by default
+	, position(NULL)
+	, partner(NULL)
+	, latest_node(-1)
 {
 	bind("T_ack_timer_", (double *) &T_ack_timer);
 	bind("ack_enabled_", (int *) &ack_enabled);
@@ -93,6 +98,8 @@ UWTWR_AAUV::UWTWR_AAUV()
 	bind("poll_size_", (int *) &poll_size);
 	bind("n_pollers_", (int *) &n_pollers);
 	bind("poller_index_", (int *) &poller_index);
+	bind("sound_speed_", (double *) &sound_speed);
+	bind("hybrid_", (int *) &hybrid);
 }
 
 UWTWR_AAUV::~UWTWR_AAUV()
@@ -121,6 +128,13 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 						  << n_pollers << std::endl;
 				return TCL_ERROR;
 			}
+			if (hybrid && (n_pollers != 2 || partner == NULL || position == NULL ||
+						!partner->hybrid || partner->poller_index == poller_index)) {
+				std::cerr << "UWTWR_AAUV(" << addr << ")::run: invalid hybrid setup, "
+						  << "needs n_pollers_ 2, setPosition, setPartner, and a partner "
+						  << "with hybrid_ 1 and the other poller_index_" << std::endl;
+				return TCL_ERROR;
+			}
 			is_running = true;
 			if (poller_index > 0) {
 				// wait for this poller's slot before the first POLL
@@ -147,6 +161,15 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 		} else if (strcasecmp(argv[1], "getPollSent") == 0) {
 			tcl.resultf("%d", getPollSent());
 			return TCL_OK;
+		} else if (strcasecmp(argv[1], "getRelay") == 0) {
+			// range this buoy would relay now: "node range time", or "-1 -1 -1"
+			int node;
+			RangeMeas m;
+			if (getRelayedRange(node, m))
+				tcl.resultf("%d %.9f %.9f", node, m.range, m.time);
+			else
+				tcl.resultf("-1 -1 -1");
+			return TCL_OK;
 		}
 	} 
 	if (argc >= 3) {
@@ -161,6 +184,40 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 				poll_node_ids.push_back(atoi(argv[i]));
 			}
 			poll_size = poll_node_ids.size();
+			return TCL_OK;
+		}
+	}
+	if (argc == 3) {
+		// position of this buoy, read at every POLL
+		if (strcasecmp(argv[1], "setPosition") == 0) {
+			position = dynamic_cast<Position *>(TclObject::lookup(argv[2]));
+			if (position == NULL) {
+				std::cerr << "UWTWR_AAUV(" << addr << ")::setPosition: "
+						  << argv[2] << " is not a Position" << std::endl;
+				return TCL_ERROR;
+			}
+			return TCL_OK;
+		}
+		// other buoy of the pair (ideal WiFi link), linked in both directions
+		if (strcasecmp(argv[1], "setPartner") == 0) {
+			UWTWR_AAUV *p = dynamic_cast<UWTWR_AAUV *>(TclObject::lookup(argv[2]));
+			if (p == NULL || p == this) {
+				std::cerr << "UWTWR_AAUV(" << addr << ")::setPartner: "
+						  << argv[2] << " is not another Module/UW/TWR/AAUV" << std::endl;
+				return TCL_ERROR;
+			}
+			partner = p;
+			p->partner = this;
+			return TCL_OK;
+		}
+		// last range measured to a node: "range time", or "-1 -1" if none
+		if (strcasecmp(argv[1], "getLastRange") == 0) {
+			std::map<int, RangeMeas>::const_iterator it =
+					last_range.find(atoi(argv[2]));
+			if (it == last_range.end())
+				tcl.resultf("-1 -1");
+			else
+				tcl.resultf("%.9f %.9f", it->second.range, it->second.time);
 			return TCL_OK;
 		}
 	}
@@ -201,11 +258,15 @@ void UWTWR_AAUV::Phy2MacStartRx(const Packet *p)
 	hdr_MPhy *ph = hdr_MPhy::access(p);
 	double gen_time = ph->txtime;
 	double received_time = ph->rxtime;
-	diff_time = received_time - gen_time;
+	double tof = received_time - gen_time;
+	// legacy (single poller): any received packet updates diff_time.
+	// With several pollers, only a valid ACK does (see Phy2MacEndRx)
+	if (n_pollers == 1)
+		diff_time = tof;
 	if (cmh->ptype() == PT_ACK_NODE) {
 		if (debug_)
 			std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
-					  << ")::RX_ACK_PACKET::TOF::" << diff_time << std::endl;
+					  << ")::RX_ACK_PACKET::TOF::" << tof << std::endl;
 	}
 }
 
@@ -217,7 +278,10 @@ void UWTWR_AAUV::Phy2MacEndRx(Packet *p)
 	int dest_mac = mach->macDA();
 	double gen_time = ph->txtime;
 	double received_time = ph->rxtime;
-	diff_time = received_time - gen_time;
+	double tof = received_time - gen_time;
+	// legacy (single poller): any received packet updates diff_time
+	if (n_pollers == 1)
+		diff_time = tof;
 
 	if (cmh->error()) {
 		if (cmh->ptype_ == PT_ACK_NODE) {
@@ -235,6 +299,15 @@ void UWTWR_AAUV::Phy2MacEndRx(Packet *p)
 		if ((dest_mac == addr) || (dest_mac == (int) MAC_BROADCAST)) {
 			if (cmh->ptype() == PT_ACK_NODE && ack_enabled) {
 				incrAckRx();
+				// a range is valid only for the ACK of the node polled by this
+				// poller, received while waiting for it
+				hdr_ACK_NODE *ackh = HDR_ACK_NODE(p);
+				if (dest_mac == addr && RxAckEnabled &&
+						ackh->id_node_ == curr_node_id) {
+					if (n_pollers > 1)
+						diff_time = tof;
+					storeRange(ackh->id_node_, tof * sound_speed, gen_time);
+				}
 				curr_ack_packet = p->copy();
 				Packet::free(p);
 				stateRxAck();
@@ -299,6 +372,18 @@ void UWTWR_AAUV::stateTxPoll()
 			std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
 						<< ")::STATE_TX_POLL::NODE::" << pollh->id_
 						<< std::endl;
+		// hybrid protocol: what this buoy relays with this POLL (payload in step 4)
+		if (hybrid && debug_) {
+			int r_node;
+			RangeMeas r;
+			bool fresh = getRelayedRange(r_node, r);
+			std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
+					  << ")::RELAY::NODE::" << r_node
+					  << "::R::" << (fresh ? r.range : -1.0)
+					  << "::T_MEAS::" << (fresh ? r.time : -1.0)
+					  << "::BUOY_POS::" << position->getX() << "::" << position->getY()
+					  << "::" << position->getZ() << std::endl;
+		}
 		TxPoll();
 	} else {
 		if (debug_)
@@ -317,6 +402,36 @@ void UWTWR_AAUV::TxPoll()
 	incrCtrlPktsTx();
 	incrPollTx();
 	Mac2PhyStartTx(curr_poll_packet);
+}
+
+void UWTWR_AAUV::storeRange(int node, double range, double t_meas)
+{
+	RangeMeas &m = last_range[node];
+	m.range = range;
+	m.time = t_meas;
+	// latest own range, read by the partner for the relay (hybrid protocol)
+	latest_node = node;
+	if (debug_)
+		std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
+				  << ")::RANGE::NODE::" << node << "::R::" << range
+				  << "::T_MEAS::" << t_meas << std::endl;
+}
+
+bool UWTWR_AAUV::getRelayedRange(int &node, RangeMeas &m) const
+{
+	node = -1;
+	if (partner == NULL || partner->latest_node < 0)
+		return false;
+	std::map<int, RangeMeas>::const_iterator it =
+			partner->last_range.find(partner->latest_node);
+	if (it == partner->last_range.end())
+		return false;
+	// fresh only if from the partner's last exchange (within n_pollers slots)
+	if (NOW - it->second.time > n_pollers * T_ack_timer)
+		return false;
+	node = partner->latest_node;
+	m = it->second;
+	return true;
 }
 
 void UWTWR_AAUV::SetNodePoll()
