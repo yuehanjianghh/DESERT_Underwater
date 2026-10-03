@@ -42,6 +42,21 @@ typedef struct hdr_POLL {
 	// Info to be sent in a POLL
 	double tof_; /**< TOF from last received ACK >*/
 
+	// Hybrid protocol payload (sender_role_ 0: legacy POLL, the fields below are unused).
+	// The air size of the POLL is POLL_size_, not the size of this struct.
+	int sender_role_; /**< 0: legacy, 1: B1, 2: B2 */
+	double buoy_x_; /**< Position of the sending buoy [m] */
+	double buoy_y_;
+	double buoy_z_;
+	int r_node_; /**< node_id_ of the relayed range, -1 if none */
+	double r_; /**< Relayed range [m]: r1(i) in B2's POLL, r2(i-1) in B1's POLL */
+	double r_time_; /**< Measurement time of the relayed range [s] */
+	int xhat_node_; /**< node_id_ of the position estimate, -1 if none (step 6) */
+	double xhat_x_; /**< Position estimate [m] */
+	double xhat_y_;
+	double xhat_z_;
+	double xhat_time_; /**< Time of the position estimate [s] */
+
 	
 	/**
 	 * Reference to the id_ variable

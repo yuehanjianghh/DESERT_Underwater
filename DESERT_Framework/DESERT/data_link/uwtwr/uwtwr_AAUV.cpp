@@ -368,21 +368,39 @@ void UWTWR_AAUV::stateTxPoll()
 		// Save info (tof) to be sent in POLL in header (easier for now)
 		pollh->tof_ = diff_time;
 
+		// hybrid payload: legacy POLL by default (node IDs -1, since 0 is a valid node)
+		pollh->sender_role_ = 0;
+		pollh->r_node_ = -1;
+		pollh->xhat_node_ = -1;
+		if (hybrid) {
+			pollh->sender_role_ = poller_index + 1;
+			pollh->buoy_x_ = position->getX();
+			pollh->buoy_y_ = position->getY();
+			pollh->buoy_z_ = position->getZ();
+			int r_node;
+			RangeMeas r;
+			if (getRelayedRange(r_node, r)) {
+				pollh->r_node_ = r_node;
+				pollh->r_ = r.range;
+				pollh->r_time_ = r.time;
+			}
+		}
+
 		if (debug_)
 			std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
 						<< ")::STATE_TX_POLL::NODE::" << pollh->id_
 						<< std::endl;
-		// hybrid protocol: what this buoy relays with this POLL (payload in step 4)
+		// hybrid protocol: payload as written in the POLL header
 		if (hybrid && debug_) {
-			int r_node;
-			RangeMeas r;
-			bool fresh = getRelayedRange(r_node, r);
+			bool has_r = (pollh->r_node_ >= 0);
 			std::cout << POLL_uid << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_AAUV(" << addr
-					  << ")::RELAY::NODE::" << r_node
-					  << "::R::" << (fresh ? r.range : -1.0)
-					  << "::T_MEAS::" << (fresh ? r.time : -1.0)
-					  << "::BUOY_POS::" << position->getX() << "::" << position->getY()
-					  << "::" << position->getZ() << std::endl;
+					  << ")::TX_PAYLOAD::ROLE::" << pollh->sender_role_
+					  << "::BUOY_POS::" << pollh->buoy_x_ << "::" << pollh->buoy_y_
+					  << "::" << pollh->buoy_z_
+					  << "::R_NODE::" << pollh->r_node_
+					  << "::R::" << (has_r ? pollh->r_ : -1.0)
+					  << "::R_TIME::" << (has_r ? pollh->r_time_ : -1.0)
+					  << "::XHAT_NODE::" << pollh->xhat_node_ << std::endl;
 		}
 		TxPoll();
 	} else {
