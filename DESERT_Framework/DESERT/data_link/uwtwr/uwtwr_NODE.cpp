@@ -82,6 +82,7 @@ UWTWR_NODE::UWTWR_NODE()
 	, curr_state(UWTWR_NODE_STATUS_IDLE)
 	, prev_state(UWTWR_NODE_STATUS_IDLE)
 	, hybrid(0) // Hybrid protocol logging off by default
+	, position(NULL)
 
 {
 	bind("node_id_", (uint *) &node_id);
@@ -116,6 +117,16 @@ int UWTWR_NODE::command(int argc, const char *const *argv)
 	} else if (argc == 3) {
 		if (strcasecmp(argv[1], "setMacAddr") == 0) {
 			addr = atoi(argv[2]);
+			return TCL_OK;
+		}
+		// position of this AUV, its z is sent as depth in every ACK
+		if (strcasecmp(argv[1], "setPosition") == 0) {
+			position = dynamic_cast<Position *>(TclObject::lookup(argv[2]));
+			if (position == NULL) {
+				std::cerr << "UWTWR_NODE(" << addr << ")::setPosition: "
+						  << argv[2] << " is not a Position" << std::endl;
+				return TCL_ERROR;
+			}
 			return TCL_OK;
 		}
 	}
@@ -282,7 +293,13 @@ void UWTWR_NODE::logHybrid(const Packet *p)
 		std::cout << ackh->ACK_uid_ << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_NODE(" << addr
 				  << ")::HYB_RX_ACK::T_RX::" << t_rx
 				  << "::FROM_NODE::" << ackh->id_node_ << "::TO::" << buoy
-				  << "::UID::" << ackh->ACK_uid_ << std::endl;
+				  << "::UID::" << ackh->ACK_uid_ << "::DEPTH::";
+		// every depth value is valid, so "NA" (not -1) marks an ACK without depth
+		if (ackh->has_depth_)
+			std::cout << ackh->depth_;
+		else
+			std::cout << "NA";
+		std::cout << std::endl;
 		// POLL-ACK delay, if this ACK answers the last POLL heard from that buoy
 		std::map<int, HeardPoll>::const_iterator it = last_poll.find(buoy);
 		if (it != last_poll.end() && it->second.uid == ackh->ACK_uid_ &&
@@ -312,6 +329,9 @@ void UWTWR_NODE::initPkt(UWTWR_NODE_PKT_TYPE pkt_type)
 		ackh->id_node_ = node_id;
 		// save the ACK_uid to ACK pkt
 		ackh->ACK_uid_ = ACK_uid;
+		// hybrid payload: depth of this AUV (pressure sensor), if its position is known
+		ackh->has_depth_ = (position != NULL);
+		ackh->depth_ = (position != NULL) ? position->getZ() : 0.0;
 		curr_ack_pkt = p->copy();
 		Packet::free(p);
 	}

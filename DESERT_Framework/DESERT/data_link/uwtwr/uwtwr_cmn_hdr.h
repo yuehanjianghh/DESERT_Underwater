@@ -110,6 +110,10 @@ typedef struct hdr_ACK_NODE {
 	uint ACK_uid_; /**< Unique ID of the ACK packet */
 	static int offset_; /**< Required by the PacketHeaderManager. */
 
+	// Hybrid protocol payload. The air size of the ACK is ACK_size_, not the size of this struct.
+	int has_depth_; /**< 1 if depth_ is set (hybrid NODE with setPosition), 0 otherwise */
+	double depth_; /**< z coordinate of the AUV when sending the ACK (pressure sensor) [m] */
+
 	// /**
 	//  * Reference to the id_ack_ variable
 	//  */

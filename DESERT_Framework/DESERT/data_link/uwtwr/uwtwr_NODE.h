@@ -40,6 +40,7 @@
 #include "uwtwr_cmn_hdr.h"
 #include "mmac.h"
 #include <timer-handler.h>
+#include <node-core.h>
 
 #include <iostream>
 #include <string>
@@ -506,6 +507,7 @@ protected:
 
 	// Hybrid protocol: passive logging of the overheard POLLs and ACKs (input of the offline AUV EKF)
 	int hybrid; /**< 1: log hybrid POLLs, ACKs and POLL-ACK delays, 0: off (default) */
+	Position *position; /**< Position of this AUV (setPosition), its z is sent as depth in the ACK; NULL if not set */
 	/**
 	 * Last POLL heard from a buoy, to match the ACK that answers it
 	 */
