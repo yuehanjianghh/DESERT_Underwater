@@ -503,6 +503,24 @@ protected:
 	static std::map<UWTWR_NODE::UWTWR_NODE_PKT_TYPE, std::string> pkt_type_info; /**< Textual info of the type of the packet */
 	
 	BackOffTimer backoff_timer; /**< Backoff timer */
+
+	// Hybrid protocol: passive logging of the overheard POLLs and ACKs (input of the offline AUV EKF)
+	int hybrid; /**< 1: log hybrid POLLs, ACKs and POLL-ACK delays, 0: off (default) */
+	/**
+	 * Last POLL heard from a buoy, to match the ACK that answers it
+	 */
+	struct HeardPoll {
+		uint uid; /**< POLL_uid_ (counted per buoy) */
+		int target; /**< node_id_ of the polled AUV */
+		double t_rx; /**< Arrival time (start of reception) [s] */
+	};
+	std::map<int, HeardPoll> last_poll; /**< Last POLL heard from each buoy (key: buoy MAC address) */
+
+	/**
+	 * Log an overheard packet of the hybrid protocol (POLL, ACK, POLL-ACK delay)
+	 * @param p the packet, received without error
+	 */
+	virtual void logHybrid(const Packet *p);
 };
 
 #endif

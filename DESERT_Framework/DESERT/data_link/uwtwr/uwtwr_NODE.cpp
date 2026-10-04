@@ -38,6 +38,7 @@
 #include "uwtwr_cmn_hdr.h"
 #include "mac.h"
 #include "mmac.h"
+#include "mphy.h"
 
 #include "uwcbr-module.h"
 #include "rng.h"
@@ -80,11 +81,13 @@ UWTWR_NODE::UWTWR_NODE()
 	, n_poll_dropped(0)
 	, curr_state(UWTWR_NODE_STATUS_IDLE)
 	, prev_state(UWTWR_NODE_STATUS_IDLE)
+	, hybrid(0) // Hybrid protocol logging off by default
 
 {
 	bind("node_id_", (uint *) &node_id);
 	bind("T_backoff_", (double *) &T_backoff);
 	bind("ACK_size_", (int *) &ACK_size);
+	bind("hybrid_", (int *) &hybrid);
 }
 
 UWTWR_NODE::~UWTWR_NODE()
@@ -200,6 +203,10 @@ void UWTWR_NODE::Phy2MacEndRx(Packet *p)
 	hdr_mac *mach = HDR_MAC(p);
 	int dest_mac = mach->macDA();
 
+	// hybrid protocol: log every POLL/ACK received without error, before it is processed or dropped
+	if (!ch->error())
+		logHybrid(p);
+
 	if (ch->error()) {
 		if (ch->ptype() == PT_POLL) {
 			if (debug_)
@@ -231,6 +238,60 @@ void UWTWR_NODE::Phy2MacEndRx(Packet *p)
 						  << std::endl;
 		}
 		drop(p, 1, UWTWR_NODE_DROP_REASON_WRONG_RECEIVER);
+	}
+}
+
+void UWTWR_NODE::logHybrid(const Packet *p)
+{
+	if (!hybrid || !debug_)
+		return;
+	hdr_cmn *ch = HDR_CMN(p);
+	hdr_mac *mach = HDR_MAC(p);
+	hdr_MPhy *ph = hdr_MPhy::access(p);
+	double t_rx = ph->rxtime; // start of reception, as timestamped by the modem
+
+	if (ch->ptype() == PT_POLL) {
+		hdr_POLL *pollh = HDR_POLL(p);
+		if (pollh->sender_role_ <= 0)
+			return; // legacy POLL
+		int buoy = mach->macSA();
+		HeardPoll &hp = last_poll[buoy];
+		hp.uid = pollh->POLL_uid_;
+		hp.target = pollh->id_;
+		hp.t_rx = t_rx;
+		bool has_r = (pollh->r_node_ >= 0);
+		bool has_x = (pollh->xhat_node_ >= 0);
+		std::cout << pollh->POLL_uid_ << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_NODE(" << addr
+				  << ")::HYB_RX_POLL::T_RX::" << t_rx
+				  << "::FROM::" << buoy << "::UID::" << pollh->POLL_uid_
+				  << "::TARGET::" << pollh->id_ << "::ROLE::" << pollh->sender_role_
+				  << "::BUOY_POS::" << pollh->buoy_x_ << "::" << pollh->buoy_y_
+				  << "::" << pollh->buoy_z_
+				  << "::R_NODE::" << pollh->r_node_
+				  << "::R::" << (has_r ? pollh->r_ : -1.0)
+				  << "::R_TIME::" << (has_r ? pollh->r_time_ : -1.0)
+				  << "::XHAT_NODE::" << pollh->xhat_node_
+				  << "::XHAT::" << (has_x ? pollh->xhat_x_ : -1.0)
+				  << "::" << (has_x ? pollh->xhat_y_ : -1.0)
+				  << "::" << (has_x ? pollh->xhat_z_ : -1.0)
+				  << "::XHAT_TIME::" << (has_x ? pollh->xhat_time_ : -1.0)
+				  << std::endl;
+	} else if (ch->ptype() == PT_ACK_NODE) {
+		hdr_ACK_NODE *ackh = HDR_ACK_NODE(p);
+		int buoy = mach->macDA();
+		std::cout << ackh->ACK_uid_ << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_NODE(" << addr
+				  << ")::HYB_RX_ACK::T_RX::" << t_rx
+				  << "::FROM_NODE::" << ackh->id_node_ << "::TO::" << buoy
+				  << "::UID::" << ackh->ACK_uid_ << std::endl;
+		// POLL-ACK delay, if this ACK answers the last POLL heard from that buoy
+		std::map<int, HeardPoll>::const_iterator it = last_poll.find(buoy);
+		if (it != last_poll.end() && it->second.uid == ackh->ACK_uid_ &&
+				it->second.target == (int) ackh->id_node_) {
+			std::cout << ackh->ACK_uid_ << "::" <<std::fixed<< std::setprecision(9) << NOW << "::UWTWR_NODE(" << addr
+					  << ")::HYB_POLL_ACK::BUOY::" << buoy << "::UID::" << ackh->ACK_uid_
+					  << "::TARGET::" << ackh->id_node_
+					  << "::DELAY::" << t_rx - it->second.t_rx << std::endl;
+		}
 	}
 }
 

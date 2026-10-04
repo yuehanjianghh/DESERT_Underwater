@@ -42,3 +42,4 @@ Module/UW/TWR/AAUV set hybrid_           0
 
 Module/UW/TWR/NODE set T_backoff_        0.01
 Module/UW/TWR/NODE set ACK_size_        10
+Module/UW/TWR/NODE set hybrid_          0
