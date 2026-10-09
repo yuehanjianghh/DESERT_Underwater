@@ -83,6 +83,7 @@ UWTWR_AAUV::UWTWR_AAUV()
 	, ack_enabled(1)
 	, n_dropped_ack_pkts(0)
 	, is_running(false)
+	, custom_sequence(false)
 	, n_pollers(1) // Default to a single poller (legacy protocol)
 	, poller_index(0)
 	, sound_speed(1500.0)
@@ -112,10 +113,13 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 
 	if (argc == 2) {
 		if (strcasecmp(argv[1], "initialize") == 0) {
-			// Initialize poll_node_ids with default sequence based on poll_size
-			poll_node_ids.clear();
-			for (int i = 0; i < poll_size; i++) {
-				poll_node_ids.push_back(i); // Poll nodes 0, 1, ..., poll_size-1
+			// Initialize poll_node_ids with default sequence based on poll_size,
+			// unless setPollSequence already set a custom one
+			if (!custom_sequence) {
+				poll_node_ids.clear();
+				for (int i = 0; i < poll_size; i++) {
+					poll_node_ids.push_back(i); // Poll nodes 0, 1, ..., poll_size-1
+				}
 			}
 			if (!initialized)
 				initInfo();
@@ -133,6 +137,13 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 				std::cerr << "UWTWR_AAUV(" << addr << ")::run: invalid hybrid setup, "
 						  << "needs n_pollers_ 2, setPosition, setPartner, and a partner "
 						  << "with hybrid_ 1 and the other poller_index_" << std::endl;
+				return TCL_ERROR;
+			}
+			if (poll_node_ids.empty() || poll_size != (int) poll_node_ids.size()) {
+				std::cerr << "UWTWR_AAUV(" << addr << ")::run: empty or inconsistent "
+						  << "poll sequence (" << poll_node_ids.size()
+						  << " nodes, poll_size_ = " << poll_size
+						  << "), call initialize or setPollSequence first" << std::endl;
 				return TCL_ERROR;
 			}
 			is_running = true;
@@ -179,11 +190,21 @@ int UWTWR_AAUV::command(int argc, const char *const * argv)
 		}
 		// set custom polling sequence
 		if (strcasecmp(argv[1], "setPollSequence") == 0) {
-			poll_node_ids.clear();
+			std::vector<int> ids;
 			for (int i = 2; i < argc; i++) {
-				poll_node_ids.push_back(atoi(argv[i]));
+				char *end;
+				long id = strtol(argv[i], &end, 10);
+				if (end == argv[i] || *end != '\0' || id < 0) {
+					std::cerr << "UWTWR_AAUV(" << addr << ")::setPollSequence: "
+							  << argv[i] << " is not a node ID" << std::endl;
+					return TCL_ERROR;
+				}
+				ids.push_back((int) id);
 			}
+			poll_node_ids = ids;
 			poll_size = poll_node_ids.size();
+			polling_rotation_index = 0;
+			custom_sequence = true;
 			return TCL_OK;
 		}
 	}

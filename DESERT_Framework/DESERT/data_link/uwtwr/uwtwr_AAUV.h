@@ -560,6 +560,7 @@ protected:
 	int poll_size; /**<Number of nodes to poll in rotation (configurable from TCL)> */
 	int polling_rotation_index; /**< Current index in rotation (0 to poll_size-1) */
 	std::vector<int> poll_node_ids; /** <List of nodes IDs to poll in rotation> */
+	bool custom_sequence; /**< True once setPollSequence is called; initialize then keeps the list */
 
 	// Buoy alternation: several pollers share one slotted schedule
 	int n_pollers; /**< Number of pollers sharing the schedule, one slot (T_ack_timer) each (1 = legacy) */
